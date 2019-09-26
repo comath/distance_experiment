@@ -1,0 +1,19 @@
+[package]
+name = "pool_experiments"
+version = "0.1.0"
+authors = ["sven <sven@endgame.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+rand = "*"
+rayon = "*"
+packed_simd = "*"
+
+[dev-dependencies]
+assert_approx_eq = "1.0.0"
+
+[profile.release]
+opt-level = 3
+rustflags = "-C target-cpu=native"
