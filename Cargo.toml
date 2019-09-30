@@ -10,8 +10,6 @@ edition = "2018"
 rand = "*"
 rayon = "*"
 packed_simd = "*"
-
-[dev-dependencies]
 assert_approx_eq = "1.0.0"
 
 [profile.release]
