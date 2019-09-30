@@ -6,10 +6,9 @@ extern crate assert_approx_eq;
 extern crate rand;
 extern crate test;
 
-use rand::Rng;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-
+use rand::Rng;
 
 mod dense;
 use dense::*;
@@ -33,10 +32,13 @@ fn main() {
 
     assert_eq!(dists[0], 0.0);
 
-    let v1 = SparsePointVec::random_dense(DIM,SP_COEF,DDIM);
-    let v2 = SparsePointVec::random_dense(DIM,SP_COEF,DDIM);
+    let v1 = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
+    let v2 = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
     let v1r = v1.spref();
     let v2r = v2.spref();
     println!("================================================");
-	println!("sparse {}",l2_sparse_simd(v1.indexes(),v1.values(),v2.indexes(),v2.values()));
+    println!(
+        "sparse {}",
+        l2_sparse_simd(v1.indexes(), v1.values(), v2.indexes(), v2.values())
+    );
 }

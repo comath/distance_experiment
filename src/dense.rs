@@ -23,7 +23,7 @@ struct MyBox {
 unsafe impl Send for MyBox {}
 unsafe impl Sync for MyBox {}
 
-const DIM: usize = 784*4;
+const DIM: usize = 784 * 4;
 const COUNT: usize = 1000;
 
 #[inline]
