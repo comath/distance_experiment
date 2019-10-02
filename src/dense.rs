@@ -4,7 +4,7 @@ use rayon::prelude::*;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::cmp::{min};
+use std::cmp::{max,min};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -182,7 +182,7 @@ impl<F: Fn(&[f32], &[f32]) -> f32 + std::marker::Sync + std::marker::Sync> Point
     pub fn new_random(dim: usize, count: usize, dist_fn: F) -> PointCloud<F> {
         let mut rng = rand::thread_rng();
         let data = (0..(dim * count)).map(|_i| rng.gen::<f32>()).collect();
-        let chunk = min(15000 / dim, 20);
+        let chunk = max(15000 / dim, 20);
         PointCloud {
             data,
             dim,
@@ -193,7 +193,7 @@ impl<F: Fn(&[f32], &[f32]) -> f32 + std::marker::Sync + std::marker::Sync> Point
 
     pub fn new_zeros(dim: usize, count: usize, dist_fn: F) -> PointCloud<F> {
         let data = vec![0.0; dim * count];
-        let chunk = min(15000 / dim, 20);
+        let chunk = max(15000 / dim, 20);
         PointCloud {
             data,
             dim,

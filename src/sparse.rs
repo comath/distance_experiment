@@ -2,15 +2,15 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use rand::Rng;
 use rayon::prelude::*;
-use std::cmp::{min};
+use std::cmp::{max,min};
 use std::sync::{Arc, Mutex};
 
 use packed_simd::*;
 
-const DIM: usize = 10000 * 3;
-const DDIM: usize = 2000;
-const COUNT: usize = 100;
-const SP_COEF: f32 = 0.01;
+const DIM: usize = 1000 * 2;
+const DDIM: usize = 1000;
+const COUNT: usize = 10;
+const SP_COEF: f32 = 0.1;
 
 // To bypass the borrow checker and do bad things
 struct MyBox {
@@ -245,15 +245,16 @@ pub fn l2_sparse_min(x_ind: &[u32], x_val: &[f32], y_ind: &[u32], y_val: &[f32])
 }
 
 pub fn l2_sparse(x_ind: &[u32], x_val: &[f32], y_ind: &[u32], y_val: &[f32]) -> f32 {
-    let mut total = 0.0;
+    let mut total: [f32;16] = [0.0;16];
+    let mut total_i = 0;
     if x_val.len() == 0 || y_val.len() == 0 {
         if x_val.len() == 0 && y_val.len() == 0 {
             return 0.0;
         }
         if x_val.len() > 0 && y_val.len() == 0 {
-            total = sqrsum(x_val);
+            total[0] = sqrsum(x_val);
         } else {
-            total = sqrsum(y_val);
+            total[0] = sqrsum(y_val);
         }
     } else {
         let mut y_iter = y_ind.iter().zip(y_val);
@@ -261,7 +262,8 @@ pub fn l2_sparse(x_ind: &[u32], x_val: &[f32], y_ind: &[u32], y_val: &[f32]) -> 
         for (xi, xv) in x_ind.iter().zip(x_val) {
             while let Some((yi, yv)) = y_tr {
                 if yi < xi {
-                    total += yv * yv;
+                    total[total_i] += yv * yv;
+                    total_i = (total_i + 1) % 16;
                     y_tr = y_iter.next();
                 } else {
                     break;
@@ -270,116 +272,144 @@ pub fn l2_sparse(x_ind: &[u32], x_val: &[f32], y_ind: &[u32], y_val: &[f32]) -> 
             if let Some((yi, yv)) = y_tr {
                 if yi == xi {
                     let val = xv - yv;
-                    total += val * val;
+                    total[total_i] += val * val;
+                    total_i = (total_i + 1) % 16;
                     y_tr = y_iter.next();
                 } else {
-                    total += xv * xv;
+                    total[total_i] += xv * xv;
+                    total_i = (total_i + 1) % 16;
                 }
             } else {
-                total += xv * xv;
+                total[total_i] += xv * xv;
+                total_i = (total_i + 1) % 16;
             }
         }
         while let Some((_yi, yv)) = y_tr {
-            total += yv * yv;
+            total[total_i] += yv * yv;
+            total_i = (total_i + 1) % 16;
             y_tr = y_iter.next();
         }
     }
-    total.sqrt()
+    total.iter().fold(0.0,|a,x|a+x).sqrt()
 }
 
 pub fn l2_sparse_simd(x_ind: &[u32], x_val: &[f32], y_ind: &[u32], y_val: &[f32]) -> f32 {
-    let mut total = 0.0;
-
-    let l_ind;
-    let l_val;
-    let s_ind;
-    let s_val;
-    if x_ind.len() > y_ind.len() {
-        l_ind = x_ind;
-        l_val = x_val;
-        s_ind = y_ind;
-        s_val = y_val;
+    // For some degree of accuracy we store the running total in 16 accumluators
+    let mut total: [f32;16] = [0.0;16];
+    let mut total_i = 0;
+    if x_val.len() == 0 || y_val.len() == 0 {
+        if x_val.len() == 0 && y_val.len() == 0 {
+            return 0.0;
+        }
+        if x_val.len() > 0 && y_val.len() == 0 {
+            total[total_i] = sqrsum(x_val);
+        } else {
+            total[total_i] = sqrsum(y_val);
+        }
     } else {
-        s_ind = x_ind;
-        s_val = x_val;
-        l_ind = y_ind;
-        l_val = y_val;
-    }
+        let l_ind;
+        let l_val;
+        let s_ind;
+        let s_val;
+        if x_ind.len() > y_ind.len() {
+            l_ind = x_ind;
+            l_val = x_val;
+            s_ind = y_ind;
+            s_val = y_val;
+        } else {
+            s_ind = x_ind;
+            s_val = x_val;
+            l_ind = y_ind;
+            l_val = y_val;
+        }
 
-    let mut d_acc_8 = f32x8::splat(0.0);
-    let mut s_tr = 0;
-    let mut l_tr = 0;
-    let mut s_i;
-    let mut l_i;
-    unsafe {
-        l_i = *l_ind.get_unchecked(l_tr);
-        s_i = *s_ind.get_unchecked(s_tr);
-        while s_ind.len() > s_tr + 8 {
-            //println!("Start");
-            //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
-            //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &y_val[l_tr..]);
-            while l_ind.len() > l_tr && l_i < s_i {
-                total += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
-                l_tr += 1;
-                l_i = *l_ind.get_unchecked(l_tr);
-            }
-            //println!("After Ys");
-            //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
-            //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &l_val[l_tr..]);
-            if l_ind.len() > l_tr + 8 && s_i == l_i {
-                if s_ind.get_unchecked(s_tr + 7) == l_ind.get_unchecked(l_tr + 7)
-                    && *s_ind.get_unchecked(s_tr + 7) == s_i + 7
-                {
-                    let y_simd = f32x8::from_slice_unaligned(&l_val[l_tr..]);
-                    let x_simd = f32x8::from_slice_unaligned(&s_val[s_tr..]);
-                    let diff = x_simd - y_simd;
-                    d_acc_8 += diff * diff;
-                    s_tr += 8;
-                    l_tr += 8;
-                    s_i = *s_ind.get_unchecked(s_tr);
-                    l_i = *l_ind.get_unchecked(l_tr);
-                } else {
-                    let a = l_val.get_unchecked(l_tr) - s_val.get_unchecked(s_tr);
-                    total += a * a;
-                    s_tr += 1;
+        let mut d_acc_8 = f32x8::splat(0.0);
+        let mut s_tr = 0;
+        let mut l_tr = 0;
+        let mut s_i;
+        let mut l_i;
+        unsafe {
+            l_i = *l_ind.get_unchecked(l_tr);
+            s_i = *s_ind.get_unchecked(s_tr);
+            while s_ind.len() > s_tr + 8 {
+                //println!("Start");
+                //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
+                //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &y_val[l_tr..]);
+                while l_ind.len() > l_tr && l_i < s_i {
+                    total[total_i] += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
+                    total_i = (total_i + 1) % 16;
                     l_tr += 1;
-                    s_i = *s_ind.get_unchecked(s_tr);
                     l_i = *l_ind.get_unchecked(l_tr);
                 }
-            } else {
-                total += s_val.get_unchecked(s_tr) * s_val.get_unchecked(s_tr);
-                s_tr += 1;
-                s_i = *s_ind.get_unchecked(s_tr);
+                //println!("After Ys");
+                //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
+                //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &l_val[l_tr..]);
+                if l_ind.len() > l_tr + 8 && s_i == l_i {
+                    if s_ind.get_unchecked(s_tr + 7) == l_ind.get_unchecked(l_tr + 7)
+                        && s_ind.get_unchecked(s_tr + 6) == l_ind.get_unchecked(l_tr + 6)
+                        && s_ind.get_unchecked(s_tr + 5) == l_ind.get_unchecked(l_tr + 5)
+                        && s_ind.get_unchecked(s_tr + 4) == l_ind.get_unchecked(l_tr + 4)
+                        && s_ind.get_unchecked(s_tr + 3) == l_ind.get_unchecked(l_tr + 3)
+                        && s_ind.get_unchecked(s_tr + 2) == l_ind.get_unchecked(l_tr + 2)
+                        && s_ind.get_unchecked(s_tr + 1) == l_ind.get_unchecked(l_tr + 1)
+                    {
+                        let y_simd = f32x8::from_slice_unaligned(&l_val[l_tr..]);
+                        let x_simd = f32x8::from_slice_unaligned(&s_val[s_tr..]);
+                        let diff = x_simd - y_simd;
+                        d_acc_8 += diff * diff;
+                        s_tr += 8;
+                        l_tr += 8;
+                        s_i = *s_ind.get_unchecked(s_tr);
+                        l_i = *l_ind.get_unchecked(l_tr);
+                    } else {
+                        let a = l_val.get_unchecked(l_tr) - s_val.get_unchecked(s_tr);
+                        total[total_i] += a * a;
+                        total_i = (total_i + 1) % 16;
+                        s_tr += 1;
+                        l_tr += 1;
+                        s_i = *s_ind.get_unchecked(s_tr);
+                        l_i = *l_ind.get_unchecked(l_tr);
+                    }
+                } else {
+                    total[total_i] += s_val.get_unchecked(s_tr) * s_val.get_unchecked(s_tr);
+                    total_i = (total_i + 1) % 16;
+                    s_tr += 1;
+                    s_i = *s_ind.get_unchecked(s_tr);
+                }
             }
-        }
 
-        while s_ind.len() > s_tr {
-            //println!("Slow");
-            //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
-            //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &l_val[l_tr..]);
-            while l_ind.len() > l_tr && l_ind.get_unchecked(l_tr) < s_ind.get_unchecked(s_tr) {
-                total += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
+            while s_ind.len() > s_tr {
+                //println!("Slow");
+                //println!("X ind:{:?}, val:{:?}", &s_ind[s_tr..], &s_val[s_tr..]);
+                //println!("Y ind:{:?}, val:{:?}", &l_ind[l_tr..], &l_val[l_tr..]);
+                while l_ind.len() > l_tr && l_ind.get_unchecked(l_tr) < s_ind.get_unchecked(s_tr) {
+                    total[total_i] += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
+                    total_i = (total_i + 1) % 16;
+                    l_tr += 1;
+                }
+                if l_ind.len() > l_tr && s_ind.get_unchecked(s_tr) == l_ind.get_unchecked(l_tr) {
+                    let a = l_val.get_unchecked(l_tr) - s_val.get_unchecked(s_tr);
+                    total[total_i] += a * a;
+                    total_i = (total_i + 1) % 16;
+                    s_tr += 1;
+                    l_tr += 1;
+                } else {
+                    total[total_i] += s_val.get_unchecked(s_tr) * s_val.get_unchecked(s_tr);
+                    total_i = (total_i + 1) % 16;
+                    s_tr += 1;
+                }
+            }
+
+            while l_val.len() > l_tr {
+                total[total_i] += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
+                total_i = (total_i + 1) % 16;
                 l_tr += 1;
             }
-            if l_ind.len() > l_tr && s_ind.get_unchecked(s_tr) == l_ind.get_unchecked(l_tr) {
-                let a = l_val.get_unchecked(l_tr) - s_val.get_unchecked(s_tr);
-                total += a * a;
-                s_tr += 1;
-                l_tr += 1;
-            } else {
-                total += s_val.get_unchecked(s_tr) * s_val.get_unchecked(s_tr);
-                s_tr += 1;
-            }
-        }
 
-        while l_val.len() > l_tr {
-            total += l_val.get_unchecked(l_tr) * l_val.get_unchecked(l_tr);
-            l_tr += 1;
+            total[0] += d_acc_8.sum();
         }
-
-        total += d_acc_8.sum();
     }
-    total.sqrt()
+    total.iter().fold(0.0,|a,x| a+x).sqrt()
 }
 
 /// CSR matrix format sparse data cloud
@@ -417,7 +447,7 @@ impl SparsePointCloud {
         while ia.len() < count + 1 {
             ia.push(consumed_nz as u32);
         }
-        let chunk = min((2000.0 / (dim as f32 * sparse_coef)) as usize, 50);
+        let chunk = max((2000.0 / (dim as f32 * sparse_coef)) as usize, 10);
 
         SparsePointCloud {
             dim,
@@ -463,7 +493,7 @@ impl SparsePointCloud {
         while ia.len() < count + 1 {
             ia.push(true_nz as u32);
         }
-        let chunk = min((2000.0 / ((sparse_dim + dense_dim) as f32 * sparse_coef)) as usize, 50);
+        let chunk = max((2000.0 / ((sparse_dim + dense_dim) as f32 * sparse_coef)) as usize, 10);
 
         SparsePointCloud {
             dim: sparse_dim + dense_dim,
@@ -827,7 +857,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse);
+        });
     }
 
     #[bench]
@@ -836,7 +869,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_min));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse_min);
+        });
     }
 
     #[bench]
@@ -845,7 +881,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_simd));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse_simd);
+        });
     }
 
     #[bench]
@@ -854,7 +893,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse);
+        });
     }
 
     #[bench]
@@ -863,7 +905,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_min));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse_min);
+        });
     }
 
     #[bench]
@@ -872,7 +917,10 @@ mod tests {
         let zero_vec = SparsePointVec::random(DIM + DDIM, SP_COEF);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_simd));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse_simd);
+        });
     }
 
     #[bench]
@@ -881,7 +929,10 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse);
+        });
     }
 
     #[bench]
@@ -890,7 +941,10 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_min));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse_min);
+        });
     }
 
     #[bench]
@@ -899,7 +953,10 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_simd));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.simple_dists(&zero_vec, i, l2_sparse_simd);
+        });
     }
 
     #[bench]
@@ -908,7 +965,10 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse);
+        });
     }
 
     #[bench]
@@ -917,7 +977,10 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_min));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse_min);
+        });
     }
 
     #[bench]
@@ -926,6 +989,9 @@ mod tests {
         let zero_vec = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.dists(&zero_vec, &indexes[..COUNT / 2], l2_sparse_simd));
+        b.iter(|| {
+            let i = test::black_box(&indexes[..COUNT / 2]);
+            zero_data.dists(&zero_vec, i, l2_sparse_simd);
+        });
     }
 }
