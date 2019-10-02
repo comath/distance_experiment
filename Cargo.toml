@@ -11,6 +11,7 @@ rand = "*"
 rayon = "*"
 packed_simd = "*"
 assert_approx_eq = "1.0.0"
+arrayref = "*"
 
 [profile.release]
 opt-level = 3

@@ -1,11 +1,10 @@
 use packed_simd::*;
 use rand::Rng;
 use rayon::prelude::*;
-use std::ops::Range;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::cmp::{max, min};
+use std::cmp::{min};
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug)]
@@ -23,8 +22,38 @@ struct MyBox {
 unsafe impl Send for MyBox {}
 unsafe impl Sync for MyBox {}
 
-const DIM: usize = 784 * 4;
+const DIM: usize = 100*4;
 const COUNT: usize = 1000;
+
+#[inline]
+pub fn sumsq_dense_fixed64(x: &[f32;64], y: &[f32;64]) -> f32 {
+    let leftover = y
+        .iter()
+        .zip(x.iter())
+        .map(|(xi, yi)| (xi - yi) * (xi - yi))
+        .fold(0.0, |acc, y| acc + y);
+    leftover
+}
+
+#[inline]
+pub fn sumsq_dense_fixed32(x: &[f32;32], y: &[f32;32]) -> f32 {
+    let leftover = y
+        .iter()
+        .zip(x.iter())
+        .map(|(xi, yi)| (xi - yi) * (xi - yi))
+        .fold(0.0, |acc, y| acc + y);
+    leftover
+}
+
+#[inline]
+pub fn sumsq_dense(x: &[f32], y: &[f32]) -> f32 {
+    let leftover = y
+        .iter()
+        .zip(x)
+        .map(|(xi, yi)| (xi - yi) * (xi - yi))
+        .fold(0.0, |acc, y| acc + y);
+    leftover
+}
 
 #[inline]
 pub fn l2_dense(mut x: &[f32], mut y: &[f32]) -> f32 {
@@ -141,9 +170,9 @@ fn cosine_dense(mut x: &[f32], mut y: &[f32]) -> f32 {
         .zip(x)
         .map(|(xi, yi)| xi * yi)
         .fold(0.0, |acc, y| acc + y);
-    let y_leftover = y.iter().map(|(yi)| yi * yi).fold(0.0, |acc, yi| acc + yi);
-    let x_leftover = x.iter().map(|(xi)| xi * xi).fold(0.0, |acc, xi| acc + xi);
-    let acc = (acc_leftover + d_acc_8.sum() + d_acc_16.sum());
+    let y_leftover = y.iter().map(|yi| yi * yi).fold(0.0, |acc, yi| acc + yi);
+    let x_leftover = x.iter().map(|xi| xi * xi).fold(0.0, |acc, xi| acc + xi);
+    let acc = acc_leftover + d_acc_8.sum() + d_acc_16.sum();
     let xnm = (x_leftover + x_acc_8.sum() + x_acc_16.sum()).sqrt();
     let ynm = (y_leftover + y_acc_8.sum() + y_acc_16.sum()).sqrt();
     (acc.cos()) / (xnm * ynm)
@@ -184,7 +213,7 @@ impl<F: Fn(&[f32], &[f32]) -> f32 + std::marker::Sync + std::marker::Sync> Point
 
     pub fn dists(&self, x: &[f32], indexes: &[usize]) -> Result<Vec<f32>, &str> {
         let len = indexes.len();
-        if len > self.chunk * 2 {
+        if len > self.chunk * 3 {
             let mut dists: Vec<f32> = Vec::with_capacity(len);
             let dists_ptr1: MyBox = MyBox {
                 p: dists.as_mut_ptr(),
@@ -236,7 +265,7 @@ impl<F: Fn(&[f32], &[f32]) -> f32 + std::marker::Sync + std::marker::Sync> Point
         }
     }
 
-    pub fn l2_simd(&self, mut x: &[f32], indexes: &[usize]) -> Vec<f32> {
+    pub fn l2_simd(&self, x: &[f32], indexes: &[usize]) -> Vec<f32> {
         indexes
             .iter()
             .map(|i| (self.dist_fn)(x, self.get(*i).unwrap()))
@@ -244,7 +273,6 @@ impl<F: Fn(&[f32], &[f32]) -> f32 + std::marker::Sync + std::marker::Sync> Point
     }
 
     pub fn l2_rayon_simd(&self, x: &[f32], indexes: &[usize]) -> Vec<f32> {
-        let len = self.len();
         indexes
             .into_par_iter()
             .map(|i| (self.dist_fn)(x, self.get(*i).unwrap()))

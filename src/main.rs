@@ -1,14 +1,13 @@
 #![feature(test)]
-#![feature(let_chains)]
+#![allow(dead_code)]
+//#![deny(warnings)]
 #[macro_use]
 extern crate assert_approx_eq;
-
 extern crate rand;
 extern crate test;
 
 use rand::seq::SliceRandom;
-use rand::thread_rng;
-use rand::Rng;
+use rand::thread_rng;   
 
 mod dense;
 use dense::*;
@@ -34,8 +33,6 @@ fn main() {
 
     let v1 = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
     let v2 = SparsePointVec::random_dense(DIM, SP_COEF, DDIM);
-    let v1r = v1.spref();
-    let v2r = v2.spref();
     println!("================================================");
     println!(
         "sparse {}",
