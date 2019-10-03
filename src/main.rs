@@ -7,10 +7,13 @@ extern crate rand;
 extern crate test;
 
 use rand::seq::SliceRandom;
-use rand::thread_rng;   
+use rand::thread_rng;
 
 mod dense;
 use dense::*;
+
+mod distances;
+use distances::*;
 
 mod sparse;
 use sparse::*;
@@ -21,7 +24,7 @@ const COUNT: usize = 2;
 const SP_COEF: f32 = 0.2;
 
 fn main() {
-    let zero_data = PointCloud::new_zeros(DIM, COUNT, l2_dense);
+    let zero_data = PointCloud::<L2>::new_zeros(DIM, COUNT);
     let zero_vec = vec![0.0; DIM];
     let mut indexes: Vec<usize> = (0..COUNT).collect();
     indexes.shuffle(&mut thread_rng());
