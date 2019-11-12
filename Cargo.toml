@@ -8,7 +8,7 @@ edition = "2018"
 
 [dependencies]
 rand = "*"
-rayon = "*"
+rayon = "1.2"
 packed_simd = "*"
 assert_approx_eq = "1.0.0"
 arrayref = "*"

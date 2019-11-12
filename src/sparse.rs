@@ -10,7 +10,7 @@ use std::marker::PhantomData;
 
 const DIM: usize = 1000 * 2;
 const DDIM: usize = 1000;
-const COUNT: usize = 100;
+const COUNT: usize = 1000;
 const SP_COEF: f32 = 0.1;
 const SETSEED: [u8;32] = [1;32];
 const VECSEED: [u8;32] = [8;32];

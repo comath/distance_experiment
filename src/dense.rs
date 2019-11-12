@@ -26,7 +26,7 @@ unsafe impl Send for MyBox {}
 unsafe impl Sync for MyBox {}
 
 const DIM: usize = 1000 * 3;
-const COUNT: usize = 100;
+const COUNT: usize = 1000;
 
 impl<F:Metric> PointCloud<F> {
     pub fn new_random(dim: usize, count: usize) -> PointCloud<F> {
@@ -59,6 +59,26 @@ impl<F:Metric> PointCloud<F> {
 
     pub fn get(&self, i: usize) -> Result<&[f32], &str> {
         Ok(&self.data[(i * self.dim)..((i + 1) * self.dim)])
+    }
+
+    pub fn chunk_dists(&self, x: &[f32], indexes: &[usize]) -> Result<Vec<f32>, &str> {
+        let len = indexes.len();
+        let mut dists: Vec<f32> = vec![0.0;len];
+        let dist_iter = dists.par_chunks_mut(self.chunk);
+        let indexes_iter = indexes.par_chunks(self.chunk);
+        let error: Arc<Mutex<Result<(), &str>>> = Arc::new(Mutex::new(Ok(())));
+        dist_iter.zip(indexes_iter).for_each(|(chunk_dists,chunk_indexes)| {
+            for (d,i) in chunk_dists.iter_mut().zip(chunk_indexes) {
+                match self.get(*i) {
+                    Ok(y) => *d = (F::dense)(x, y),
+                    Err(e) => {
+                        *error.lock().unwrap() = Err(e);
+                    }
+                }
+            }
+        });
+        (*error.lock().unwrap())?;
+        Ok(dists)
     }
 
     pub fn dists(&self, x: &[f32], indexes: &[usize]) -> Result<Vec<f32>, &str> {
@@ -142,12 +162,12 @@ mod tests {
     }
 
     #[bench]
-    fn bench_l2_simd(b: &mut Bencher) {
+    fn bench_l2_chunk(b: &mut Bencher) {
         let zero_data = PointCloud::<L2>::new_zeros(DIM, COUNT);
         let zero_vec = vec![0.0; DIM];
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dist(&zero_vec[..], &indexes[..COUNT / 2]));
+        b.iter(|| zero_data.chunk_dists(&zero_vec[..], &indexes[..COUNT / 2]));
     }
 
     #[bench]
@@ -160,12 +180,12 @@ mod tests {
     }
 
     #[bench]
-    fn bench_linfty_simd(b: &mut Bencher) {
+    fn bench_linfty_chunk(b: &mut Bencher) {
         let zero_data = PointCloud::<Linfty>::new_zeros(DIM, COUNT);
         let zero_vec = vec![0.0; DIM];
         let mut indexes: Vec<usize> = (0..COUNT).collect();
         indexes.shuffle(&mut thread_rng());
-        b.iter(|| zero_data.simple_dist(&zero_vec[..], &indexes[..COUNT / 2]));
+        b.iter(|| zero_data.chunk_dists(&zero_vec[..], &indexes[..COUNT / 2]));
     }
 
     #[bench]
